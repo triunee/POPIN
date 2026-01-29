@@ -2,7 +2,7 @@
 
 팝업스토어를 위한 LoRa 기반 스마트 체험 관리 시스템
 
-> 이 프로젝트는 [원본 레포지토리]([https://github.com/NET-PROTOCOL/popin.git])를 
+> 이 프로젝트는 [원본 레포지토리](https://github.com/NET-PROTOCOL/popin.git)를 
 리팩토링한 버전입니다.
 
 ## 개요
