@@ -16,6 +16,12 @@ Pop-in은 RSSI 기반 자동 부스 탐색과 실시간 대기열 관리를 통�
 - **Push-to-Talk 채팅**: 부스 내 사용자 간 실시간 채팅
 - **세션 관리**: 120초 체험 세션, 1인 1회 제한
 
+## 데모 및 문서
+
+- 🎬 **시연 영상** — 관리자·사용자 모드 전체 동작 흐름 시연 (`docs/demo.mp4`, 저장소 클론 후 로컬에서 재생)
+- 📄 **[네트워크 프로토콜 설계 보고서](docs/network-protocol-design-report.pdf)** — 프로토콜 설계 상세 보고서
+- 🔧 **[L3 레이어 리팩토링 문서](docs/L3_리팩토링.md)** — 모듈 캡슐화 개선 내역
+
 ## 시스템 요구사항
 
 ### 하드웨어
@@ -44,18 +50,42 @@ make clean && make
 - `myProtocol.bin` - 바이너리 파일
 - `myProtocol.hex` - HEX 파일
 
+### 보드에 업로드
+
+NUCLEO 보드를 USB로 연결하면 마운트되는 저장소에 `.bin`을 복사합니다:
+
+```bash
+cp BUILD/myProtocol.bin /Volumes/NODE_F446RE/   # macOS 예시
+```
+
+`buildnCp.sh` 스크립트로 빌드와 복사를 한 번에 수행할 수도 있습니다.
+
 ## 프로젝트 구조
 
 ```
 popin-main/
-├── main.cpp              # 메인 엔트리 포인트
+├── main.cpp              # 엔트리 포인트 - ID 입력, L2/L3 초기화, 메인 루프
 ├── L2_*.cpp/h            # Layer 2 - Stop-and-Wait ARQ, 데이터 분할/조립
-├── L3_*.cpp/h            # Layer 3 - FSM, 메시지 처리, 세션 제어
-├── protocol_parameters.h # 프로토콜 파라미터 설정
+├── L3_*.cpp/h            # Layer 3 - Pop-in 프로토콜 로직 (아래 표 참고)
+├── protocol_parameters.h # L2 ARQ 파라미터, 디버그 플래그
+├── docs/                 # 시연 영상, 설계 보고서, 리팩토링 문서
 ├── mbed/                 # mbed OS 라이브러리
-├── lib/                  # 추가 라이브러리
+├── lib/                  # PHY/MAC 계층 라이브러리 (사전 컴파일)
 └── Makefile              # 빌드 설정
 ```
+
+### L3 모듈 구성
+
+| 모듈 | 책임 |
+|------|------|
+| `L3_FSMmain` | FSM 상태 전이, 메시지 핸들러, 키보드 입력 처리 |
+| `L3_FSMevent` | 이벤트 플래그 관리 (`setEventFlag` / `checkEventFlag` 등) |
+| `L3_LLinterface` | 하위 레이어 인터페이스 + FSM 상태 변수 보관 (getter/setter) |
+| `L3_timer` | 세션·연결·등록·큐 준비·스캔 타이머 및 재시도 카운터 |
+| `L3_msg` | 메시지 인코딩/디코딩 (타입 정의는 `L3_msg.h`) |
+| `L3_types.h` | `User_t`, `Booth_t`, `BoothScanInfo_t` 구조체 |
+
+> 모듈 캡슐화 리팩토링 내역은 [`docs/L3_리팩토링.md`](docs/L3_리팩토링.md) 참고.
 
 ## 프로토콜 아키텍처
 
@@ -81,6 +111,14 @@ popin-main/
 - **PHY/MAC**: LoRa 기반 물리적 통신 및 RSSI 측정
 
 ## 사용 방법
+
+### 실행
+
+보드 연결 후 시리얼 터미널을 **9600 baud**로 엽니다 (`screen /dev/tty.usbmodem* 9600`,
+PuTTY, mbed Serial 등). 부팅 후 노드 ID를 입력하면 역할이 자동 결정됩니다.
+
+- **ID 1–3**: 관리자(부스) 모드 — 해당 번호의 부스를 운영
+- **ID 4 이상**: 사용자 모드 — 부스 탐색·연결 시작
 
 ### 관리자 모드 (ID: 1-3)
 
@@ -118,17 +156,17 @@ e - 퇴장/대기열 이탈
 
 ## 시스템 파라미터
 
-| 파라미터 | 값 | 설명 |
-|---------|-----|------|
-| `MAX_BOOTH_CAPACITY` | 1 | 부스 최대 수용 인원 |
-| `MAX_USERS` | 20 | 최대 사용자 수 |
-| `MAX_BOOTHS` | 3 | 최대 부스 수 |
-| `SESSION_DURATION_MS` | 120,000 | 세션 시간 (120초 = 2분) |
-| `L2_ARQ_MAXRETRANSMISSION` | 10 | ARQ 최대 재전송 횟수 |
-| `L2_ARQ_MAXWAITTIME` | 3초 | ARQ 최대 대기 시간 |
-| `CONNECT_TIMEOUT_MS` | 3,000 | 부스 연결 타임아웃 |
-| `REGISTER_TIMEOUT_MS` | 3,000 | 등록 응답 타임아웃 |
-| `QUEUE_READY_TIMEOUT_MS` | 10,000 | 입장 준비 타임아웃 |
+| 파라미터 | 값 | 설명 | 정의 위치 |
+|---------|-----|------|----------|
+| `MAX_BOOTH_CAPACITY` | 1 | 부스 최대 수용 인원 | `L3_msg.h` |
+| `MAX_USERS` | 20 | 최대 사용자 수 | `L3_msg.h` |
+| `MAX_BOOTHS` | 3 | 최대 부스 수 | `L3_msg.h` |
+| `SESSION_DURATION_MS` | 120,000 | 세션 시간 (120초 = 2분) | `L3_FSMmain.cpp` |
+| `CONNECT_TIMEOUT_MS` | 3,000 | 부스 연결 응답 타임아웃 (ms) | `L3_FSMmain.cpp` |
+| `REGISTER_TIMEOUT_MS` | 3,000 | 등록 응답 타임아웃 (ms) | `L3_FSMmain.cpp` |
+| `QUEUE_READY_TIMEOUT_MS` | 10,000 | 입장 준비 응답 타임아웃 (ms) | `L3_FSMmain.cpp` |
+| `L2_ARQ_MAXRETRANSMISSION` | 10 | ARQ 최대 재전송 횟수 | `protocol_parameters.h` |
+| `L2_ARQ_MAXWAITTIME` / `MINWAITTIME` | 3 / 1 | ARQ 재전송 대기 시간 (초, 동적 조정) | `protocol_parameters.h` |
 
 ## 메시지 타입
 
@@ -171,10 +209,22 @@ e - 퇴장/대기열 이탈
 ## FSM 상태
 
 ### 사용자 FSM
-- **SCANNING**: 부스 탐색 중
-- **CONNECTED**: 부스 연결 완료 (정보 확인 중)
-- **WAITING**: 대기열 대기 중
-- **IN_USE**: 체험 세션 진행 중
+- **SCANNING**: 부스 탐색 중 (BOOTH_SCAN 브로드캐스트 → ANNOUNCE 수집 → RSSI 최적 부스 선택)
+- **CONNECTED**: 부스 연결 완료, 부스 정보 확인 후 y/n 응답 대기
+- **WAITING**: 대기열 대기 중 (QUEUE_READY 수신 시 입장)
+- **IN_USE**: 체험 세션 진행 중 (120초 또는 조기 퇴장)
+
+```mermaid
+stateDiagram-v2
+    [*] --> SCANNING
+    SCANNING --> CONNECTED: 최적 부스 선택 후 CONNECT_REQUEST
+    CONNECTED --> SCANNING: n 응답 / 연결·등록 타임아웃 / 이미 체험함
+    CONNECTED --> IN_USE: y 응답 + 정원 여유 → REGISTER 성공
+    CONNECTED --> WAITING: y 응답 + 정원 만석 → 대기열 등록
+    WAITING --> IN_USE: QUEUE_READY 수신 후 입장
+    WAITING --> SCANNING: 대기열 이탈(e) / QUEUE_READY 무응답
+    IN_USE --> SCANNING: 세션 만료 / 조기 퇴장(e)
+```
 
 ### 관리자 동작
 관리자는 별도 FSM 없이 이벤트 기반으로 동작:
@@ -194,8 +244,8 @@ e - 퇴장/대기열 이탈
 
 ### RSSI 기반 부스 선택
 - 모든 부스로부터 ANNOUNCE 메시지 수신
-- RSSI 값 비교하여 가장 강한 신호의 부스 자동 선택
-- 네트워크 품질 기반 최적 부스 연결
+- 선택 점수 = `RSSI + (정원 여유 시 +20) − (대기 인원 × 10)`
+- RSSI(신호 품질)를 기본으로 혼잡도까지 반영해 최적 부스 자동 연결
 
 ### 1인 1회 제한
 - 부스 측에서 등록 이력 영구 저장
@@ -223,3 +273,14 @@ e - 퇴장/대기열 이탈
 - **언어**: C++
 - **아키텍처**: Event-driven FSM
 - **ARQ**: Stop-and-Wait
+
+## 라이선스 및 출처
+
+[NET-PROTOCOL/popin](https://github.com/NET-PROTOCOL/popin.git)을 기반으로 L3 레이어를
+리팩토링한 버전입니다.
+
+| 대상 | 라이선스 |
+|------|----------|
+| 프로젝트 자체 코드 (`L2_*`, `L3_*`, `main.cpp`, `Makefile`, 문서) | MIT — [`LICENSE`](LICENSE) |
+| `mbed/` (Arm Mbed OS) | Apache-2.0, © Arm Limited — [`mbed/LICENSE`](mbed/LICENSE) |
+| `lib/` (PHY/MAC HAL 바이너리) | 수업 제공 자료, 재배포 조건 미확인 |
